@@ -33,12 +33,12 @@ from transformers import (
 from transformers.models.gpt2 import GPT2Config, GPT2LMHeadModel
 
 # old Llama model specific
-from transformers import LlamaConfig, LlamaForCausalLM, LlamaTokenizer
+# from transformers import LlamaConfig, LlamaForCausalLM, LlamaTokenizer
 
 # new Llama (precisely a more generalized case)
 from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM
 
-import realtabformer
+import realtabformer_generalized
 
 from .data_utils import (
     ModelFileName,
@@ -92,9 +92,9 @@ class REaLTabFormer:
     def __init__(
         self,
         model_type: str,
-        tabular_config: Optional[GPT2Config] = None,
-        # tabular_config: Optional[AutoConfig] = None,
-        model_name: str = "meta-llama/Llama-3.2-1B", #Thomas: Get model from HuggingFace
+        # tabular_config: Optional[GPT2Config] = None,
+        tabular_config: Optional[AutoConfig] = None,
+        llm_name: str = "meta-llama/Llama-3.2-1B", #Thomas: Get model from HuggingFace
         relational_config: Optional[EncoderDecoderConfig] = None,
         parent_realtabformer_path: Optional[Path] = None,
         freeze_parent_model: Optional[bool] = True,
@@ -121,7 +121,7 @@ class REaLTabFormer:
             tabular_config: GPT2Config instance to customize the GPT2 model for tabular data
                 generation.
                 
-            model_name: Thomas: get the model from HuggingFace but Llama3+ has no configuration from HuggingFace?
+            llm_name: Thomas: get the LLM model from HuggingFace but Llama3+ has no configuration from HuggingFace?
                 
             relational_config: EncoderDecoderConfig instance that defines the encoder and decoder
                 configs for the encoder-decoder model used for the relational data generation. See
@@ -163,7 +163,7 @@ class REaLTabFormer:
             self._invalid_model_type(model_type)
 
         self.model_type = model_type
-        self.model_name = model_name
+        self.llm_name = llm_name
 
         if self.model_type == ModelType.tabular:
             self._init_tabular(tabular_config)
@@ -292,7 +292,7 @@ class REaLTabFormer:
         # implicitly placed at the beginning of the dataframe.
         self.target_col = None
 
-        self.realtabformer_version = realtabformer.__version__
+        self.realtabformer_version = realtabformer_generalized.__version__
 
     def _invalid_model_type(self, model_type):
         raise ValueError(
@@ -308,10 +308,10 @@ class REaLTabFormer:
             )
         else:
             # Default is 12, use 6 for distill-gpt2 as default
-            tabular_config = GPT2Config(n_layer=6)
-            # tabular_config = AutoConfig.from_pretrained(self.model_name) #Thomas: possible to change configurations?
-            # check if we can tune AutoConfig setups like n_layer ourselves
-            # Thomas: theoretically we can because it should read from the config json in the LLM file from HuggingFace
+            # tabular_config = GPT2Config(n_layer=6)
+            tabular_config = AutoConfig.from_pretrained(self.llm_name, num_hidden_layers = 6) #Thomas: possible to change configurations?
+            # Thomas: can change configuration ourselves but the names are slightly different
+            # 
         self.tabular_config = tabular_config
         self.model = None
 
@@ -1096,17 +1096,22 @@ class REaLTabFormer:
         # Set up the config and the model
         self.tabular_config.bos_token_id = self.vocab["token2id"][SpecialTokens.BOS]
         self.tabular_config.eos_token_id = self.vocab["token2id"][SpecialTokens.EOS]
-        self.tabular_config.vocab_size = len(self.vocab["id2token"])
+        # self.tabular_config.vocab_size = len(self.vocab["id2token"])
 
         # Make sure that we have at least the number of
         # columns in the transformed data as positions.
-        if self.tabular_config.n_positions < len(self.vocab["column_token_ids"]):
-            self.tabular_config.n_positions = 128 + len(self.vocab["column_token_ids"])
+        #if self.tabular_config.n_positions < len(self.vocab["column_token_ids"]):
+            #self.tabular_config.n_positions = 128 + len(self.vocab["column_token_ids"])
 
-        self.model = GPT2LMHeadModel(self.tabular_config)
+        # Thomas: guess n_positions in GPT2config should be equivalent to vocab_size
+        #if self.tabular_config.vocab_size < len(self.vocab["column_token_ids"]):
+        #    self.tabular_config.vocab_size = 128 + len(self.vocab["column_token_ids"])
+
+        print(self.tabular_config)
+        # self.model = GPT2LMHeadModel(self.tabular_config)
         
         # tokenizer = AutoTokenizer.from_pretrained(self.llm_name)
-        # self.model = AutoModelForCausalLM.from_pretrained(self.llm_name)
+        self.model = AutoModelForCausalLM.from_pretrained(self.llm_name, config = self.tabular_config)
 
 
         # Tell pytorch to run this model on the GPU.
@@ -1444,6 +1449,7 @@ class REaLTabFormer:
 
         # Save attributes
         rtf_attrs = self.__dict__.copy()
+        # print(rtf_attrs)
         rtf_attrs.pop("model")
 
         # We don't need to store the `parent_config`
@@ -1586,7 +1592,8 @@ class REaLTabFormer:
 
         # Load model weights
         if realtf.model_type == ModelType.tabular:
-            realtf.model = GPT2LMHeadModel(realtf.tabular_config)
+            # realtf.model = GPT2LMHeadModel(realtf.tabular_config)
+            realtf.model = AutoModelForCausalLM.from_pretrained(self.llm_name, realtf.tabular_config)
         elif realtf.model_type == ModelType.relational:
             realtf.model = EncoderDecoderModel(realtf.relational_config)
         else:
